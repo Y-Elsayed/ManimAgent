@@ -1,0 +1,35 @@
+Manim Explainer Agent — Setup Guide
+====================================
+
+1. Prerequisites
+   - Python 3.10+
+   - Internet connection
+   - An OpenAI account (https://platform.openai.com)
+
+2. Get your OpenAI API Key
+   - Visit https://platform.openai.com/api-keys
+   - Click “Create new secret key”
+   - Copy your key (it starts with sk-proj-...)
+
+3. Add your API key
+   Option A: Create a file named .env in this project’s folder:
+       OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+   Option B: Run the program, and it will ask you for the key and save it automatically.
+
+4. Install dependencies
+   Inside your project folder:
+       python3 -m venv .venv
+       source .venv/bin/activate
+       pip install -r requirements.txt
+
+5. Run the project
+       python main.py
+
+6. When asked:
+   - Enter the concept you want visualized.
+   - Choose whether to refine with the critic.
+   - Choose whether to render the animation.
+   - Choose a save location (default: ./output).
+
+Your animation will be generated and saved in the selected folder.
