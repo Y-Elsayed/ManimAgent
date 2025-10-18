@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from agents.planner_agent import PlannerAgent
 from agents.critic_agent import CriticAgent
 from agents.generator_agent import GeneratorAgent
+from agents.aligner_agent import AlignerAgent
 from nodes.interpreter_node import InterpreterNode
 
 
@@ -13,12 +14,10 @@ from nodes.interpreter_node import InterpreterNode
 # ENVIRONMENT CHECK
 # ------------------------
 def check_command(cmd):
-    """Return True if command exists."""
     return shutil.which(cmd) is not None
 
 
 def has_amssymb():
-    """Return True if amssymb.sty exists in LaTeX tree."""
     try:
         result = subprocess.run(
             ["kpsewhich", "amssymb.sty"],
@@ -33,7 +32,6 @@ def has_amssymb():
 
 
 def check_environment():
-    """Verify system dependencies. Ask user to fix missing ones before continuing."""
     print(f"Checking environment on {os.uname().sysname}...")
 
     deps = {
@@ -57,21 +55,12 @@ def check_environment():
             print(f"[Missing] {dep} not found.")
             missing.append((dep, install_hint))
 
-    # Check amssymb explicitly (even if latex present)
     if not missing and not has_amssymb():
-        print("[Warn] LaTeX found but math symbol packages (amssymb) are missing.")
-        print("Attempting automatic fix...")
+        print("[Warn] LaTeX found but missing amssymb; trying auto-install...")
         try:
-            subprocess.run(
-                ["sudo", "tlmgr", "install", "amsfonts", "amsmath", "amssymb"],
-                check=False
-            )
+            subprocess.run(["sudo", "tlmgr", "install", "amsfonts", "amsmath", "amssymb"], check=False)
         except Exception:
             pass
-        if not has_amssymb():
-            print("Still missing amssymb, but it may already exist under amsfonts — continuing safely.")
-        else:
-            print("[OK] amssymb verified.")
     elif has_amssymb():
         print("[OK] LaTeX math packages verified (amssymb found).")
 
@@ -79,10 +68,7 @@ def check_environment():
         print("\nSome dependencies are missing:")
         for dep, cmd in missing:
             print(f" - {dep}: {cmd}")
-
-        print("\nYou can install them manually using the above commands.")
-        print("Your progress will NOT be lost — checkpoints are saved inside your project folder.")
-        print("After installing, restart the program. It will resume from the last saved checkpoint.")
+        print("\nInstall them using the above commands, then restart.")
         exit(1)
 
     print("All dependencies found. Continuing...\n")
@@ -98,13 +84,8 @@ def ensure_api_key():
         return key
 
     print("\n--- OpenAI API Key Required ---")
-    print("You can create one here: https://platform.openai.com/api-keys")
-    print("\nTwo ways to set it up:")
-    print("1. Create a '.env' file in this folder containing:")
-    print("     OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-    print("2. Or, enter your key below.")
-
-    user_key = input("\nEnter your OpenAI API key: ").strip()
+    print("Create one at: https://platform.openai.com/api-keys")
+    user_key = input("Enter your OpenAI API key: ").strip()
     if not user_key:
         print("No key provided. Exiting.")
         exit(1)
@@ -113,22 +94,19 @@ def ensure_api_key():
         f.write(f"OPENAI_API_KEY={user_key}\n")
 
     os.environ["OPENAI_API_KEY"] = user_key
-    print("API key saved to .env.")
     return user_key
 
 
 # ------------------------
-# FAST MODE HANDLING
+# MODE HANDLING
 # ------------------------
 def ask_fast_mode():
-    print("\nFast Mode determines how interactive this session is.")
-    print(" - In Fast Mode: the system skips confirmations and runs automatically.")
-    print(" - In Normal Mode: you’ll review each step manually.")
+    print("\nFast Mode skips confirmations and runs automatically.")
     return input("Enable Fast Mode? [y/N]: ").lower().startswith("y")
 
 
 # ------------------------
-# FILE HANDLING
+# FILE UTILITIES
 # ------------------------
 def save_checkpoint(data, filename, folder="./checkpoints"):
     os.makedirs(folder, exist_ok=True)
@@ -154,14 +132,23 @@ def load_checkpoint(filename, folder="./checkpoints"):
     return None
 
 
+def delete_checkpoint(*files):
+    for f in files:
+        try:
+            os.remove(os.path.join("./checkpoints", f))
+            print(f"[Deleted stale checkpoint → {f}]")
+        except FileNotFoundError:
+            pass
+
+
 def get_unique_output_dir(base_dir: str, name: str) -> str:
-    target_dir = os.path.join(base_dir, name)
+    target = os.path.join(base_dir, name)
     counter = 1
-    while os.path.exists(target_dir):
-        target_dir = os.path.join(base_dir, f"{name} ({counter})")
+    while os.path.exists(target):
+        target = os.path.join(base_dir, f"{name} ({counter})")
         counter += 1
-    os.makedirs(target_dir, exist_ok=True)
-    return target_dir
+    os.makedirs(target, exist_ok=True)
+    return target
 
 
 def get_save_location(concept_name=None, default="./output", fast=False):
@@ -170,20 +157,10 @@ def get_save_location(concept_name=None, default="./output", fast=False):
         base_name = concept_name.replace(" ", "_").lower() if concept_name else "animation"
         return get_unique_output_dir(default, base_name)
 
-    while True:
-        base_path = input(f"\nSave folder (default: {default}): ").strip()
-        if not base_path:
-            base_path = default
-        if not os.path.exists(base_path):
-            create = input(f"Directory '{base_path}' not found. Create it? (y/n): ").lower().startswith("y")
-            if not create:
-                print("Please enter a valid directory.")
-                continue
-            os.makedirs(base_path, exist_ok=True)
-        base_name = concept_name.replace(" ", "_").lower() if concept_name else "animation"
-        unique_dir = get_unique_output_dir(base_path, base_name)
-        print(f"[Output Directory → {unique_dir}]")
-        return unique_dir
+    base_path = input(f"\nSave folder (default: {default}): ").strip() or default
+    os.makedirs(base_path, exist_ok=True)
+    base_name = concept_name.replace(" ", "_").lower() if concept_name else "animation"
+    return get_unique_output_dir(base_path, base_name)
 
 
 # ------------------------
@@ -205,58 +182,75 @@ def main():
     planner = PlannerAgent()
     critic = CriticAgent()
     generator = GeneratorAgent()
+    aligner = AlignerAgent()
     interpreter = InterpreterNode()
 
+    # Smart refresh if concept changed
+    old_plan = load_checkpoint("story_plan.json")
+    if old_plan and old_plan.get("concept") != concept:
+        print(f"Concept changed from '{old_plan.get('concept')}' → '{concept}'. Resetting checkpoints...")
+        delete_checkpoint("refined_story.json", "generation_result.json", "aligned_result.json")
+
     # Step 1: Planning
-    print("\n[1/4] Planning explanation...")
+    print("\n[1/5] Planning explanation...")
     story_plan = load_checkpoint("story_plan.json")
     if story_plan and not fast_mode:
-        use_existing = input("A previous story plan was found. Resume from it? (y/n): ").lower().startswith("y")
+        use_existing = input("Resume from previous plan? (y/n): ").lower().startswith("y")
         if not use_existing:
             story_plan = None
     if not story_plan:
         story_plan = planner.plan(concept)
         save_checkpoint(story_plan, "story_plan.json")
-    if not fast_mode:
-        print("\nStory Plan:")
-        print(story_plan)
 
     # Step 2: Refinement
-    refine = True if fast_mode else input("\nReview and refine with Critic Agent? (y/n): ").lower().startswith("y")
+    refine = True if fast_mode else input("\nRefine with Critic Agent? (y/n): ").lower().startswith("y")
     refined_plan = load_checkpoint("refined_story.json") if refine else story_plan
     if refine and not refined_plan:
-        print("\n[2/4] Refining storyboard...")
+        print("\n[2/5] Refining storyboard...")
         refined_plan = critic.critique(story_plan)
         save_checkpoint(refined_plan, "refined_story.json")
     story_to_use = refined_plan or story_plan
-    if not fast_mode:
-        print("\nRefined Storyboard:")
-        print(story_to_use)
 
     # Step 3: Generation
-    print("\n[3/4] Generating Manim script...")
+    print("\n[3/5] Generating Manim script...")
     generation_result = load_checkpoint("generation_result.json")
+    regen = not fast_mode and input("Regenerate script from refined story? (y/n): ").lower().startswith("y")
+    if regen:
+        delete_checkpoint("generation_result.json", "aligned_result.json")
+        generation_result = None
     if not generation_result:
         generation_result = generator.generate(story_to_use)
         save_checkpoint(generation_result, "generation_result.json")
-    print("\nGenerated script and narration prepared.")
+    print("Generated script and narration prepared.")
 
-    # Step 4: Rendering
-    run_now = True if fast_mode else input("\nRender the animation now? (y/n): ").lower().startswith("y")
+    # Step 4: Alignment
+    print("\n[4/5] Aligning narration and visuals...")
+    aligned_result = load_checkpoint("aligned_result.json")
+    realign = not fast_mode and input("Re-align narration and visuals? (y/n): ").lower().startswith("y")
+    if realign:
+        delete_checkpoint("aligned_result.json")
+        aligned_result = None
+    if not aligned_result:
+        aligned_result = aligner.align(generation_result)
+        save_checkpoint(aligned_result, "aligned_result.json")
+    print("Narration and animation timing optimized.")
+
+    # Step 5: Rendering
+    run_now = True if fast_mode else input("\nRender animation now? (y/n): ").lower().startswith("y")
     if run_now:
         save_path = get_save_location(concept_name=concept, fast=fast_mode)
         try:
             output_path = interpreter.run(
-                code=generation_result["code"],
-                file_name=generation_result["file_name"],
-                scene_narrations=generation_result.get("scene_narrations", []),
+                code=aligned_result["code"],
+                file_name=aligned_result["file_name"],
+                scene_narrations=aligned_result.get("scene_narrations", []),
                 output_dir=save_path
             )
             print(f"\nRendered output saved at: {output_path}")
         except Exception as e:
             print(f"\n[Error during rendering] {e}")
     else:
-        print("\nScript generated but not rendered.")
+        print("Script generated but not rendered.")
 
     print("\nDone.")
 
