@@ -4,26 +4,26 @@ The user wants to visualize the following concept:
 {concept}
 
 Your task:
-Plan a short, intuitive, and visually engaging explanation that teaches this concept clearly and logically.
+Design a concise, intuitive, and visually rich explanation that helps learners grasp this concept step-by-step.
 
 Output format (strictly JSON):
-{
+{{
     "concept": "<the concept>",
     "scenes": [
-        {
+        {{
             "title": "<scene title>",
             "narration": "<spoken or written narration for the scene>",
             "visuals": ["<describe the visuals shown in this scene>"],
-            "key_points": ["<list the main ideas, formulas, or insights>"]
-        }
+            "key_points": ["<list main ideas, relationships, or equations>"]
+        }}
     ]
-}
+}}
 
 Guidelines:
-- Keep the number of scenes between 3 and 6.
-- Use simple, intuitive language while preserving depth.
-- Each scene should build on the previous one logically.
-- Visuals should directly reinforce the narration (e.g., shapes, diagrams, transformations).
-- Do not include markdown, explanations, or text outside the JSON.
-
-Output only valid JSON.
+- Keep between 3 and 6 scenes.
+- Use plain, accessible language while preserving accuracy and insight.
+- Begin with an intuitive motivation or real-world hook.
+- Build scenes in a logical flow, from intuition → example → formal insight.
+- Ensure visuals directly support the narration (e.g., shapes, transformations, graphs).
+- Avoid external commentary or formatting outside JSON.
+- Output only valid JSON with no Markdown, text, or explanations outside it.
