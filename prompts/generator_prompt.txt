@@ -25,27 +25,91 @@ Follow these rules carefully:
        "Matrix Transformation" → class MatrixTransformationScene(Scene):
 
 2. Each scene should:
-   - Display the scene title briefly at the start (e.g., using Text()).
-   - Show visuals described in "visuals".
-   - Display any formulas or key points using Text() or MathTex().
-   - Animate them with simple Manim animations such as Write(), FadeIn(), Transform(), or Create().
+   - Briefly display the scene title at the start (e.g., using Text()).
+   - Clearly present visuals described in "visuals" and formulas in "key_points".
+   - Use simple, fluid animations: Write(), FadeIn(), Transform(), Create(), etc.
+   - Ensure text and formulas **never overlap visuals** — position them thoughtfully
+     (e.g., title at the top, visuals centered, explanations below).
+   - **Remove all elements from previous steps** before introducing new ones
+     (use self.clear(), FadeOut(), or remove()).
+   - Keep the screen minimal and readable at all times.
 
-3. Do NOT include or play audio. The narration will be added later.
-   Instead, use on-screen text to visualize or emphasize key spoken content.
+3. Never leave unneeded objects on screen once their explanation ends.
+   Each new idea should have its own clear visual space.
 
-4. At the end of every scene, include a timing placeholder comment in this exact format:
+4. Do NOT include or play audio. The narration will be added later.
+   Instead, use on-screen text to emphasize key spoken ideas.
+
+5. At the end of every scene, include a timing placeholder comment in this exact format:
        #WAIT_<SCENE_TITLE_IN_CAPS_WITH_UNDERSCORES>
    Example:
        #WAIT_MATRIX_TRANSFORMATION
    This will later be replaced automatically with:
        self.wait(<narration_duration_in_seconds>)
-   so that each scene waits for its narration to finish before continuing.
 
-5. Use clean, readable, valid Python code that can be executed directly with Manim.
+6. Always end each scene by **fading out all remaining objects**:
+       self.play(FadeOut(*self.mobjects))
+   This ensures a clean transition before the next scene.
+
+7. Use clean, valid Python code executable directly with Manim.
    Do not include markdown, explanations, or triple backticks.
    Output only the Python code.
 
-6. Keep the script self-contained and runnable via:
+8. Keep the script self-contained and runnable via:
        manim -pql <filename>.py <SceneName>
 
-Output only the complete Manim script. No additional text, commentary, or formatting.
+9. Compatibility Correction (automated, not hardcoded)
+   - If the generated Manim code contains outdated arguments like `u_min`, `u_max`, `v_min`, or `v_max` (from older Manim versions), automatically convert them to the modern syntax used in current Manim releases:
+         u_min=-3, u_max=3, v_min=-3, v_max=3
+     → becomes
+         u_range=[-3, 3], v_range=[-3, 3]
+   - Apply this transformation dynamically during code generation so that no version-specific code is hardcoded.
+   - This rule ensures compatibility with all Manim Community releases (≥0.18).
+
+10. Do not use or reference external media assets (e.g., SVGs, PNGs, or images) unless explicitly stated in the story plan.
+    - Replace such visuals with Manim-native primitives (like Circle, Square, Dot, Arrow, etc.) or Text labels.
+    - If a "visual" description mentions an image or icon, illustrate it symbolically with shapes or text (e.g., Text("ML") instead of SVGMobject("machine_learning_icon.svg")).
+    - This ensures the script is self-contained and runs without missing files.
+
+11. Geometry and Coordinate Formatting
+    - Always define geometric shapes (Polygon, Polyline, Line, Arrow, Surface, etc.) with explicit coordinate tuples or arrays.
+    - Never pass raw numeric sequences; use structured 2D or 3D points instead.
+        Example:
+            Polygon([-3, 1, 0], [-2, 2, 0], [-1, 0, 0], color=BLUE)
+        NOT:
+            Polygon(-3, 1, -2, 2, -1, 0, color=BLUE)
+    - All coordinate points must have the same dimension (2D or 3D).
+    - This prevents reshape errors like “cannot reshape array of size … into shape (3)”.
+
+12. Manim Version Compatibility
+    - If the code uses outdated argument names like `u_min`, `u_max`, `v_min`, or `v_max`, convert them automatically to:
+          u_range=[<min>, <max>], v_range=[<min>, <max>]
+    - Never rely on deprecated parameters; use `u_range` and `v_range` for surfaces.
+    - Ensure all code is valid for Manim Community ≥0.18.
+
+13. Asset Independence
+    - Never reference external media files (e.g., “.svg”, “.png”, or “.jpg”) unless explicitly mentioned in the story plan.
+    - Replace image or icon references with symbolic Manim primitives or text placeholders.
+        Example:
+            Use Text("ML") or a Circle() instead of SVGMobject("machine_learning_icon.svg").
+    - This guarantees all scenes render correctly even without local assets.
+
+14. Text and Math Layout Safety
+    - Ensure text (Text, MathTex) and visuals never overlap.
+    - Titles must be placed near the top using `.to_edge(UP)`.
+    - Explanatory text should appear below or beside visuals with proper spacing (e.g., `.next_to()`).
+    - Avoid excessive font sizes and keep compositions readable and minimal.
+
+15. Scene Cleanup Discipline
+    - At the end of every logical subsection or when introducing new visuals, remove or fade out all old elements.
+    - Use `self.play(FadeOut(*self.mobjects))` or `self.clear()` appropriately.
+    - Always fade out everything at the end of each scene before transitioning.
+
+16. Compatibility and Robustness Enhancements
+    - All generated Manim scripts must be self-contained and executable with:
+          manim -pql <filename>.py <SceneName>
+    - Do not include comments, markdown, or explanations outside valid Python.
+    - Add a timing placeholder comment at the end of each scene:
+          #WAIT_<SCENE_TITLE_IN_CAPS_WITH_UNDERSCORES>
+    - Do not include audio or narration playback.
+    - Always end each scene with a fade-out for a clean transition.
