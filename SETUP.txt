@@ -2,7 +2,7 @@ Manim Explainer Agent — Setup Guide
 ====================================
 
 1. Prerequisites
-   - Python 3.10+
+   - Python 3.10+ (Recommended version: Python 3.11.14)
    - Internet connection
    - An OpenAI account (https://platform.openai.com)
 
