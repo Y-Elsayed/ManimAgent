@@ -20,10 +20,11 @@ class PlannerAgent:
             os.path.dirname(__file__), "..", "prompts", "planner_prompt.txt"
         )
         with open(prompt_path, "r", encoding="utf-8") as f:
-            self.prompt_template = f.read()
+            self.prompt_template = f.read().strip()
 
-        # Create a ChatPromptTemplate
-        self.prompt = ChatPromptTemplate.from_template(self.prompt_template)
+        self.prompt = ChatPromptTemplate.from_template(
+            self.prompt_template
+        )
 
     def plan(self, concept: str):
         """Generate a structured story plan for the given concept."""

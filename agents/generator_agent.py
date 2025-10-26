@@ -1,100 +1,184 @@
 import os
 import json
 import re
+from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 
 class GeneratorAgent:
     """
-    GeneratorAgent
-    ---------------
-    Converts a structured story plan into:
-    1. Valid Manim Python code
-    2. Narration text for TTS
-    3. A self-descriptive filename for the generated files
+    Generates Manim Python code with real geometric visuals using LLM.
+    Creates proper Manim primitives: Circle, Arrow, NumberPlane, Graph, etc.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.6):
+    def __init__(self, model: str = "gpt-5", temperature: float = 0.3, 
+                 use_tts: bool = True, tts_voice: str = "onyx"):
         prompt_path = os.path.join(
             os.path.dirname(__file__), "..", "prompts", "generator_prompt.txt"
         )
-        if not os.path.exists(prompt_path):
-            raise FileNotFoundError(f"Prompt file not found at {prompt_path}")
-
         with open(prompt_path, "r", encoding="utf-8") as f:
-            self.prompt_text = f.read()
+            self.prompt_text = f.read().strip()
 
         self.llm = ChatOpenAI(model=model, temperature=temperature)
         self.prompt = ChatPromptTemplate.from_template(self.prompt_text)
+        self.use_tts = use_tts
+        self.tts_voice = tts_voice
 
-    # -------------------------------------------------
-    # Sanitize broken Manim patterns before saving
-    # -------------------------------------------------
-    def _sanitize_manim_code(self, code: str) -> str:
-        """
-        Fixes invalid Manim code patterns, such as referencing
-        variables like 'key_points[0]' before definition inside VGroup(),
-        or using self.play(Write(key_points[0]), Write(key_points[1])).
-        """
+    @staticmethod
+    def _slugify(name: str) -> str:
+        name = (name or "visualization").lower()
+        name = re.sub(r"[^a-z0-9_]+", "_", name).strip("_")
+        return name[:40] or "visualization"
 
-        # Fix VGroup self-references
-        pattern = r"(\w+)\s*=\s*VGroup\((.*?)\)"
-        matches = re.finditer(pattern, code, re.DOTALL)
-        for match in matches:
-            var_name = match.group(1)
-            body = match.group(2)
+    @staticmethod
+    def _extract_code(text: str) -> str:
+        """Extract Python code from LLM response."""
+        # Remove markdown fences
+        fence_pattern = r"```(?:python)?\s*([\s\S]*?)```"
+        match = re.search(fence_pattern, text)
+        if match:
+            return match.group(1).strip()
+        return text.strip()
 
-            if f"{var_name}[" in body:
-                text_objects = re.findall(r"(Text\(.*?\)|MathTex\(.*?\))", body)
-                if text_objects:
-                    new_lines = []
-                    sub_vars = []
-                    for idx, text_obj in enumerate(text_objects):
-                        sub = f"{var_name}_{idx+1}"
-                        prev = f"{var_name}_{idx}" if idx > 0 else None
-                        if prev:
-                            new_lines.append(f"{sub} = {text_obj}.scale(0.5).next_to({prev}, DOWN)")
-                        else:
-                            new_lines.append(f"{sub} = {text_obj}.scale(0.5)")
-                        sub_vars.append(sub)
-                    new_lines.append(f"{var_name} = VGroup({', '.join(sub_vars)})")
-                    new_lines.append(f"self.play(" + ", ".join([f'Write({s})' for s in sub_vars]) + ")")
-                    code = code.replace(match.group(0), "\n    ".join(new_lines))
+    def _build_prompt_context(self, story_plan: Dict[str, Any]) -> str:
+        """Build enhanced prompt with TTS and visual instructions."""
+        context = {
+            "story_plan": json.dumps(story_plan, ensure_ascii=False, indent=2),
+            "use_tts": self.use_tts,
+            "tts_voice": self.tts_voice,
+            "num_scenes": len(story_plan.get("scenes", []))
+        }
+        
+        # Add TTS instruction to the story plan
+        enhanced_plan = story_plan.copy()
+        enhanced_plan["_instructions"] = {
+            "use_tts": self.use_tts,
+            "voice": self.tts_voice,
+            "layout_rules": "Ensure all visuals fit within x∈[-6,6], y∈[-3.5,3.5]"
+        }
+        
+        return json.dumps(enhanced_plan, ensure_ascii=False, indent=2)
 
-        # Fix Write(key_points[0]) style play calls
-        code = re.sub(
-            r"self\.play\(Write\((\w+)\[[0-9]+\]\)(?:,\s*Write\(\1\[[0-9]+\]\))*\)",
-            lambda m: f"self.play(Write({m.group(1)}))",
-            code
-        )
+    def _sanitize_code(self, code: str) -> str:
+        """Clean up generated code."""
+        # Remove any markdown remnants
+        code = re.sub(r"^```python\s*", "", code)
+        code = re.sub(r"```\s*$", "", code)
+        
+        # Ensure proper imports
+        if "from manim import" not in code:
+            header = "from manim import *\nimport numpy as np\n"
+            if self.use_tts:
+                header += "from audio_mixin import AudioMixin\n"
+            code = header + "\n" + code
+        
+        # Fix common issues
+        code = re.sub(r"\)\s*,\s*buff\s*=", ", buff=", code)  # Fix buff placement
+        
+        return code.strip()
 
-        return code
+    def generate(self, story_plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate Manim code with real geometric visuals using LLM."""
+        
+        # Prepare enhanced prompt
+        plan_str = self._build_prompt_context(story_plan)
+        
+        # Add visual enhancement instructions
+        enhanced_prompt = f"""Generate Manim code for the following storyboard.
 
-    # -------------------------------------------------
-    # Generate full output (code + narrations + file name)
-    # -------------------------------------------------
-    def generate(self, story_plan: dict) -> dict:
-        plan_json = json.dumps(story_plan, indent=2)
-        chain = self.prompt | self.llm
-        response = chain.invoke({"story_plan": plan_json}).content
+CRITICAL REQUIREMENTS:
+1. Use REAL Manim primitives (not just Text):
+   - NumberPlane() for grids/coordinate systems
+   - Arrow(start, end, buff=0) for vectors/directions
+   - Circle(radius=1) for circular concepts
+   - Dot(point) for points/locations
+   - Line(start, end) for connections
+   - Axes(x_range=[-5,5], y_range=[-5,5]) for graphs
+   - VGroup() to group related objects
+   - MathTex() for equations
+   - Always add .set_color() to make visuals distinct
 
-        # Sanitize generated code
-        cleaned_code = self._sanitize_manim_code(response)
+2. TTS Integration:
+   - use_tts: {self.use_tts}
+   - voice: {self.tts_voice}
+   - If TTS enabled: inherit from AudioMixin and use self.play_with_audio(animation, "narration")
+   - If TTS disabled: inherit from Scene and use self.play(animation)
 
-        concept = story_plan.get("concept", "concept_visualization").lower()
-        safe_name = re.sub(r"[^a-z0-9_]+", "_", concept).strip("_") or "visualization"
+3. Layout Safety:
+   - All objects must fit within x∈[-6,6], y∈[-3.5,3.5]
+   - Title at y=3 using .to_edge(UP, buff=0.5)
+   - Main visuals at y∈[-1,2]
+   - Key points at y∈[-3,-2] using .to_edge(DOWN, buff=0.5)
+   - Always use .scale() or .scale_to_fit_width() to keep objects on screen
 
-        scene_narrations = []
-        for scene in story_plan.get("scenes", []):
-            narration = scene.get("narration", "").strip()
-            if narration:
-                scene_narrations.append(
-                    {"title": scene.get("title", "Scene"), "narration": narration}
-                )
+4. Create ALL {len(story_plan.get("scenes", []))} scenes from the storyboard.
+
+Storyboard:
+{plan_str}
+"""
+
+        try:
+            # Generate code via LLM
+            response = self.llm.invoke(enhanced_prompt).content.strip()
+            
+            # Extract and clean code
+            code = self._extract_code(response)
+            code = self._sanitize_code(code)
+            
+        except Exception as e:
+            print(f"[Error] LLM generation failed: {e}")
+            # Fallback to simple template
+            code = self._fallback_generation(story_plan)
+
+        concept = story_plan.get("concept", "concept_visualization")
+        file_name = self._slugify(concept)
+
+        scene_narrations = [
+            {"title": s.get("title", "Scene"), "narration": (s.get("narration") or "").strip()}
+            for s in story_plan.get("scenes", [])
+        ]
 
         return {
-            "file_name": safe_name,
-            "code": cleaned_code,
+            "file_name": file_name,
+            "code": code,
             "scene_narrations": scene_narrations,
         }
+
+    def _fallback_generation(self, story_plan: Dict[str, Any]) -> str:
+        """Simple fallback if LLM fails."""
+        scenes = story_plan.get("scenes", [])
+        if not scenes:
+            return "from manim import *\n\nclass EmptyScene(Scene):\n    def construct(self):\n        pass"
+        
+        code_parts = ["from manim import *", "import numpy as np"]
+        if self.use_tts:
+            code_parts.append("from audio_mixin import AudioMixin\n")
+        else:
+            code_parts.append("")
+        
+        for scene in scenes:
+            title = scene.get("title", "Scene")
+            scene_name = re.sub(r"[^A-Za-z0-9]", "", title.title()) + "Scene"
+            
+            base_class = "AudioMixin, Scene" if self.use_tts else "Scene"
+            narration = scene.get("narration", "")
+            
+            scene_code = f"""
+class {scene_name}({base_class}):
+    def construct(self):
+        title = Text("{title[:40]}", font_size=32).to_edge(UP, buff=0.5)
+        self.play(Write(title))
+        self.wait(1)
+        
+        # Simple visual placeholder
+        text = Text("Visual coming soon", font_size=24)
+        self.play(FadeIn(text))
+        self.wait(2)
+        
+        self.play(FadeOut(*self.mobjects))
+        self.wait(0.5)
+"""
+            code_parts.append(scene_code)
+        
+        return "\n".join(code_parts)

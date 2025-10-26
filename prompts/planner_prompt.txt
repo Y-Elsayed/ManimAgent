@@ -20,11 +20,12 @@ Output format (strictly JSON):
 }}
 
 Guidelines:
-- Keep between 3 and 15 scenes.
+- Keep between 3 and 6 scenes for clarity and conciseness.
 - Use plain, accessible language while preserving accuracy and insight.
 - Begin with an intuitive motivation or real-world hook.
 - Build scenes in a logical flow, from intuition → example → formal insight.
 - Ensure visuals directly support the narration (e.g., shapes, transformations, graphs).
+- Keep narration concise - aim for 1-2 sentences per scene (spoken in 5-15 seconds).
 - Avoid external commentary or formatting outside JSON.
 - Output only valid JSON with no Markdown, text, or explanations outside it.
 
@@ -39,18 +40,18 @@ ADDITIONAL MANIM-COMPATIBLE RULES
        Example:
          "A parabola curve descending to its minimum point."
          "A polygon forming a hill with points (-3,1), (-2,2), (-1,0)."
-   - Avoid raw numeric sequences (e.g., “3, 1, 2, 3, 1, 1”) — always specify coordinate tuples.
+   - Avoid raw numeric sequences (e.g., "3, 1, 2, 3, 1, 1") – always specify coordinate tuples.
 
 2. **No External Assets**
    - Do NOT reference or depend on external images, icons, or files (SVGs, PNGs, JPGs, etc.).
-   - Replace symbolic visuals (like “a neural network icon”) with native shapes or text labels.
+   - Replace symbolic visuals (like "a neural network icon") with native shapes or text labels.
        Example:
          Instead of "machine learning icon", use "Text('ML') inside a Circle".
 
 3. **Scene Composition**
    - Each scene should be renderable entirely using geometric shapes and text.
-   - Ensure visuals do not overlap excessively — imagine a clear Manim frame layout.
-   - Avoid metaphors that can’t be drawn geometrically (“like a thought bubble” → ✗).
+   - Ensure visuals do not overlap excessively – imagine a clear Manim frame layout.
+   - Avoid metaphors that can't be drawn geometrically ("like a thought bubble" → ✗).
 
 4. **Mathematical & Spatial Clarity**
    - When introducing formulas, specify them clearly in MathTex-compatible form:
