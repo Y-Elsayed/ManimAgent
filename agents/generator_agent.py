@@ -1,9 +1,8 @@
 import os
 import json
 import re
+import ast
 from typing import Dict, Any, List
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
 
 
 class GeneratorAgent:
@@ -14,6 +13,9 @@ class GeneratorAgent:
 
     def __init__(self, model: str = "gpt-5", temperature: float = 0.3, 
                  use_tts: bool = True, tts_voice: str = "onyx"):
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+
         prompt_path = os.path.join(
             os.path.dirname(__file__), "..", "prompts", "generator_prompt.txt"
         )
@@ -43,14 +45,6 @@ class GeneratorAgent:
 
     def _build_prompt_context(self, story_plan: Dict[str, Any]) -> str:
         """Build enhanced prompt with TTS and visual instructions."""
-        context = {
-            "story_plan": json.dumps(story_plan, ensure_ascii=False, indent=2),
-            "use_tts": self.use_tts,
-            "tts_voice": self.tts_voice,
-            "num_scenes": len(story_plan.get("scenes", []))
-        }
-        
-        # Add TTS instruction to the story plan
         enhanced_plan = story_plan.copy()
         enhanced_plan["_instructions"] = {
             "use_tts": self.use_tts,
@@ -77,6 +71,35 @@ class GeneratorAgent:
         code = re.sub(r"\)\s*,\s*buff\s*=", ", buff=", code)  # Fix buff placement
         
         return code.strip()
+
+    def _validate_code(self, code: str) -> None:
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            raise ValueError(f"Generated code is not valid Python: {e}") from e
+
+        scene_classes = []
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_names = [self._ast_name(base) for base in node.bases]
+            if "Scene" in base_names:
+                has_construct = any(
+                    isinstance(item, ast.FunctionDef) and item.name == "construct"
+                    for item in node.body
+                )
+                if has_construct:
+                    scene_classes.append(node.name)
+
+        if not scene_classes:
+            raise ValueError("Generated code has no Scene class with construct()")
+
+    def _ast_name(self, node) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return ""
 
     def generate(self, story_plan: Dict[str, Any]) -> Dict[str, Any]:
         """Generate Manim code with real geometric visuals using LLM."""
@@ -119,12 +142,13 @@ Storyboard:
 """
 
         try:
-            # Generate code via LLM
-            response = self.llm.invoke(enhanced_prompt).content.strip()
+            chain = self.prompt | self.llm
+            response = chain.invoke({"story_plan": plan_str}).content.strip()
             
             # Extract and clean code
             code = self._extract_code(response)
             code = self._sanitize_code(code)
+            self._validate_code(code)
             
         except Exception as e:
             print(f"[Error] LLM generation failed: {e}")
@@ -160,22 +184,38 @@ Storyboard:
         for scene in scenes:
             title = scene.get("title", "Scene")
             scene_name = re.sub(r"[^A-Za-z0-9]", "", title.title()) + "Scene"
+            if not scene_name or scene_name == "Scene":
+                scene_name = "GeneratedScene"
             
             base_class = "AudioMixin, Scene" if self.use_tts else "Scene"
             narration = scene.get("narration", "")
+            title_literal = json.dumps(title[:40])
+            narration_literal = json.dumps(narration[:140])
+            key_point = scene.get("key_points", [""])[0] if scene.get("key_points") else ""
+            key_literal = json.dumps(str(key_point)[:70])
+            play_title = (
+                f"self.play_with_audio(Write(title), {narration_literal})"
+                if self.use_tts else
+                "self.play(Write(title))"
+            )
             
             scene_code = f"""
 class {scene_name}({base_class}):
     def construct(self):
-        title = Text("{title[:40]}", font_size=32).to_edge(UP, buff=0.5)
-        self.play(Write(title))
-        self.wait(1)
-        
-        # Simple visual placeholder
-        text = Text("Visual coming soon", font_size=24)
-        self.play(FadeIn(text))
+        title = Text({title_literal}, font_size=32).to_edge(UP, buff=0.5)
+        {play_title}
+
+        plane = NumberPlane(x_range=[-5, 5, 1], y_range=[-3, 3, 1]).set_opacity(0.35)
+        circle = Circle(radius=1.1).set_color(BLUE).shift(LEFT * 2)
+        arrow = Arrow(circle.get_right(), RIGHT * 2, buff=0.1).set_color(YELLOW)
+        dot = Dot(RIGHT * 2).set_color(RED)
+        label = Text({key_literal}, font_size=24).to_edge(DOWN, buff=0.5)
+
+        self.play(Create(plane))
+        self.play(Create(circle), GrowArrow(arrow), FadeIn(dot))
+        self.play(Write(label))
         self.wait(2)
-        
+
         self.play(FadeOut(*self.mobjects))
         self.wait(0.5)
 """

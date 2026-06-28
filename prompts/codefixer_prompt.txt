@@ -10,6 +10,9 @@ Your task:
 - Keep all existing scene structures, classes, and logic intact.
 - Ensure the resulting code is valid Python and runs without syntax errors.
 - Correct Manim-specific issues (e.g., misplaced commas, wrong method chaining, invalid object arguments).
+- Preserve every scene class unless the traceback proves a class name itself is invalid.
+- Preserve AudioMixin and play_with_audio usage unless the traceback is specifically about audio.
+- Return a complete Python file, not a diff or partial snippet.
 - Do not add explanations or comments.
 - Output ONLY the corrected Python code – no markdown fences, no notes.
 

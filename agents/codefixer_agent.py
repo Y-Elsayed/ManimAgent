@@ -1,6 +1,5 @@
 import os
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
+import re
 
 
 class CodeFixerAgent:
@@ -10,6 +9,9 @@ class CodeFixerAgent:
     """
 
     def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.2):
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+
         prompt_path = os.path.join(
             os.path.dirname(__file__), "..", "prompts", "codefixer_prompt.txt"
         )
@@ -31,12 +33,8 @@ class CodeFixerAgent:
             print(f"[CodeFixerAgent] LLM call failed: {e}")
             return code
 
-        # Remove markdown fences if they exist
-        if "```" in response:
-            parts = response.split("```")
-            if len(parts) >= 2:
-                response = parts[1]
-                if response.startswith("python"):
-                    response = response[6:].strip()
+        fence = re.search(r"```(?:python)?\s*([\s\S]*?)```", response)
+        if fence:
+            response = fence.group(1)
         
         return response.strip()

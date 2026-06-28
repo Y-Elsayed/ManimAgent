@@ -111,6 +111,8 @@ class SyntaxGuardNode:
             bases = m.group(2)
             if "AudioMixin" in bases:
                 return m.group(0)
+            if "Scene" not in bases:
+                return m.group(0)
             return f"class {m.group(1)}(AudioMixin, {bases}):"
 
         return re.sub(r"class\s+(\w+)\(\s*([^)]+?)\s*\):", repl, code)
@@ -163,25 +165,46 @@ class SyntaxGuardNode:
     # Public API
     # ----------------------------------------------------------------------
     def sanitize(self, code: str) -> Dict[str, object]:
+        applied = []
+
         # 0) Audio shim at the very top (so import is always resolved)
+        before = code
         code = self._inject_audio_header(code)
+        if code != before:
+            applied.append("audio_header")
 
         # 1) Imports
+        before = code
         code = self._ensure_imports(code)
+        if code != before:
+            applied.append("imports")
 
         # 2) Minor text cleanups
+        before = code
         code = self._sanitize_trailing_buff_tuple(code)
+        if code != before:
+            applied.append("trailing_buff_tuple")
+        before = code
         code = self._fix_class_boundaries(code)
+        if code != before:
+            applied.append("class_boundaries")
 
         # 3) Audio mixin and play() replacement
+        before = code
         code = self._inject_audio_mixin(code)
+        if code != before:
+            applied.append("audio_mixin")
+        before = code
         code = self._inject_play_audio(code)
+        if code != before:
+            applied.append("play_with_audio")
 
         # 4) Structure checks and simple brace auto-fix
         balanced = self._check_balance(code)
         if not balanced:
             code = self._auto_fix_braces(code)
             balanced = self._check_balance(code)
+            applied.append("brace_auto_fix")
 
         nested_ok, nested_offender = self._check_class_nesting(code)
 
@@ -193,6 +216,9 @@ class SyntaxGuardNode:
             "nested_classes": not nested_ok,
             "nested_offender": nested_offender,
             "syntax_valid": syntax_ok,
+            "audio_enabled": self.enable_audio_mixin,
+            "play_rewrite_enabled": self.replace_play_calls,
+            "transformations": applied,
             **self._analyze_counts(code),
         }
 
