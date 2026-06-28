@@ -33,53 +33,70 @@ class AudioMixin:
         except Exception:
             return 0.0
 
-def _tts(self, text: str, file_path: str, voice: str = "onyx"):
-    """
-    Generate speech via OpenAI TTS API with correct WAV encoding.
-    """
-    try:
-        with self.client.audio.speech.with_streaming_response.create(
-            model="gpt-4o-mini-tts",
-            voice=voice,
-            input=text,
-            format="wav"
-        ) as response:
-            response.stream_to_file(file_path)
-    except Exception as e:
-        print(f"[TTS Error] {e}")
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-            "-t", "1", "-acodec", "pcm_s16le", file_path
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-    def play_with_audio(self, animation, narration: str, voice: str = "onyx"):
+    def _tts(self, text: str, file_path: str, voice: str = "onyx") -> bool:
         """
-        Generate TTS audio for `narration` and play animation for its duration.
+        Generate speech via OpenAI TTS API with WAV encoding.
         """
+        try:
+            with self.client.audio.speech.with_streaming_response.create(
+                model="gpt-4o-mini-tts",
+                voice=voice,
+                input=text,
+                response_format="wav"
+            ) as response:
+                response.stream_to_file(file_path)
+            return True
+        except Exception as e:
+            print(f"[TTS Error] {e}")
+            return self._write_silent_audio(file_path)
+
+    def _write_silent_audio(self, file_path: str, seconds: float = 1.0) -> bool:
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                    "-t", str(seconds), "-acodec", "pcm_s16le", file_path
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return result.returncode == 0 and os.path.exists(file_path)
+        except Exception as e:
+            print(f"[TTS Fallback Error] {e}")
+            return False
+
+    def play_with_audio(self, *animations, narration: str = "", voice: str = "onyx", min_run_time: float = 2.0):
+        """
+        Generate TTS audio for narration and play animations for its duration.
+        """
+        if not narration and animations and isinstance(animations[-1], str):
+            *animations, narration = animations
+
         if not narration.strip():
-            self.play(animation)
+            self.play(*animations)
             return
 
-        # use .wav format for compatibility
         file_name = str(abs(hash(narration))) + ".wav"
         file_path = os.path.join(self.output_dir, file_name)
 
         if file_name not in self.audio_cache:
             print(f"[TTS] Generating audio: {narration[:60]}...")
-            self._tts(narration, file_path, voice)
-            duration = self._get_audio_duration(file_path)
+            ok = self._tts(narration, file_path, voice)
+            duration = self._get_audio_duration(file_path) if ok else 0.0
             self.audio_cache[file_name] = duration
         else:
             duration = self.audio_cache[file_name]
 
-        # Attach audio to scene and play
         abs_path = os.path.abspath(file_path)
         if os.path.exists(abs_path):
             self.add_sound(abs_path)
         else:
             print(f"[Warning] Missing audio file: {abs_path}")
 
-        self.play(animation, run_time=max(duration, 2.0))  # Ensure minimum length
+        run_time = max(duration, min_run_time)
+        if animations:
+            self.play(*animations, run_time=run_time)
+        else:
+            self.wait(run_time)
         self.wait(0.3)

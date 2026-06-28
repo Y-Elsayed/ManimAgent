@@ -2,14 +2,11 @@ import os
 import re
 import json
 import shutil
-from dotenv import load_dotenv
-
-# Core agents
-from agents.planner_agent import PlannerAgent
-from agents.generator_agent import GeneratorAgent
-from nodes.syntax_guard_node import SyntaxGuardNode
-from nodes.interpreter_node import InterpreterNode
-
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    def load_dotenv():
+        return False
 
 # ----------------------------
 # Environment & Utilities
@@ -23,10 +20,17 @@ def check_command(cmd):
 def check_environment():
     """Verify required dependencies are installed."""
     print("Checking environment...")
+    if os.name == "nt":
+        ffmpeg_hint = "Install FFmpeg and add it to PATH"
+        latex_hint = "Install MiKTeX and add pdflatex to PATH"
+    else:
+        ffmpeg_hint = "brew install ffmpeg" if shutil.which("brew") else "sudo apt install ffmpeg -y"
+        latex_hint = "sudo apt install texlive-latex-base -y"
+
     deps = {
         "manim": "pip install manim",
-        "ffmpeg": "brew install ffmpeg" if os.name == "posix" else "sudo apt install ffmpeg -y",
-        "latex": "sudo apt install texlive-latex-base -y"
+        "ffmpeg": ffmpeg_hint,
+        "latex": latex_hint,
     }
 
     for dep, hint in deps.items():
@@ -162,6 +166,11 @@ def main():
     output_dir, debug_dir, media_dir, final_dir = ensure_dirs(project_path)
 
     # Initialize agents
+    from agents.planner_agent import PlannerAgent
+    from agents.generator_agent import GeneratorAgent
+    from nodes.syntax_guard_node import SyntaxGuardNode
+    from nodes.interpreter_node import InterpreterNode
+
     planner = PlannerAgent()
     generator = GeneratorAgent(use_tts=prefs["use_tts"], tts_voice=prefs["tts_voice"])
     syntax_guard = SyntaxGuardNode(
@@ -171,21 +180,29 @@ def main():
     interpreter = InterpreterNode()
 
     # ----------------------------
-    # Step 1 – Planning explanation
+    # Step 1 - Planning explanation
     # ----------------------------
     print("\n[1/4] Planning explanation...")
-    story_plan = planner.plan(concept)
+    try:
+        story_plan = planner.plan(concept)
+    except Exception as e:
+        print(f"\n[Planning error] {e}")
+        return
     save_debug(debug_dir, "story_plan.json", story_plan)
 
     # ----------------------------
-    # Step 2 – Generating Manim script
+    # Step 2 - Generating Manim script
     # ----------------------------
     print("\n[2/4] Generating Manim script...")
-    generation_result = generator.generate(story_plan)
+    try:
+        generation_result = generator.generate(story_plan)
+    except Exception as e:
+        print(f"\n[Generation error] {e}")
+        return
     save_debug(debug_dir, "generation_result.json", generation_result)
 
     # ----------------------------
-    # Step 3 – Syntax validation & code sanitization
+    # Step 3 - Syntax validation & code sanitization
     # ----------------------------
     print("\n[3/4] Running syntax validation and code sanitation...")
     sanitized = syntax_guard.sanitize(generation_result["code"])
@@ -199,7 +216,7 @@ def main():
         print(f"  - {k}: {v}")
 
     # ----------------------------
-    # Step 4 – Rendering final animation
+    # Step 4 - Rendering final animation
     # ----------------------------
     print("\n[4/4] Rendering animation...")
     try:
@@ -209,20 +226,26 @@ def main():
             output_dir=output_dir,
             media_dir=media_dir,
             final_dir=final_dir,
+            debug_dir=debug_dir,
         )
         
         if result:
-            print(f"\n[Success] Rendered scenes: {result['scenes']}")
+            print(f"\nRendered scenes: {result.get('rendered', [])}")
+            print(f"Failed scenes: {result.get('failed', [])}")
             
             # Show file locations
             if result.get("organized"):
                 org = result["organized"]
-                print(f"\n📁 Project Directory: {project_path}")
-                print(f"   ├─ Debug files: {debug_dir}")
-                print(f"   ├─ Python script: {result['script_path']}")
-                print(f"   ├─ Individual scenes: {output_dir}/")
+                print(f"\nProject Directory: {project_path}")
+                print(f"   Debug files: {debug_dir}")
+                print(f"   Python script: {result['script_path']}")
+                print(f"   Individual scenes: {output_dir}/")
                 if org.get("merged_video"):
-                    print(f"   └─ 🎬 Final video: {org['merged_video']}")
+                    print(f"   Final video: {org['merged_video']}")
+            if result.get("failed"):
+                print(f"\n[Partial failure] Failed scenes: {result['failed']}")
+            elif result.get("rendered"):
+                print("\nAll scenes rendered successfully.")
         else:
             print("\n[Error] Rendering failed or no scenes found.")
             
@@ -232,7 +255,6 @@ def main():
         traceback.print_exc()
 
     print(f"\nProject saved under: {project_path}")
-    print("\nAll steps completed successfully.")
 
 
 if __name__ == "__main__":

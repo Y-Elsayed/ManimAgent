@@ -1,10 +1,9 @@
 import os
+import ast
 import re
 import subprocess
 import glob
 import shutil
-from openai import OpenAI
-from agents.codefixer_agent import CodeFixerAgent
 
 
 class InterpreterNode:
@@ -16,20 +15,56 @@ class InterpreterNode:
     Also tracks rendered videos and merges them into a final output.
     """
 
-    def __init__(self):
-        self.client = OpenAI()
-        self.fixer = CodeFixerAgent()
+    def __init__(self, fixer=None):
+        self.fixer = fixer
+
+    def _get_fixer(self):
+        if self.fixer is None:
+            from agents.codefixer_agent import CodeFixerAgent
+            self.fixer = CodeFixerAgent()
+        return self.fixer
 
     # ----------------------------------------------------------------------
     # Scene detection
     # ----------------------------------------------------------------------
     def _detect_scene_names(self, code: str):
         """
-        Detect any class that inherits from Scene (directly or in a mixed base list).
+        Detect top-level classes that inherit from Scene.
         Returns a list of class names.
         """
-        pattern = r"^\s*class\s+([A-Za-z0-9_]+)\s*\(([^)]*Scene[^)]*)\)\s*:"
-        return [m[0] for m in re.findall(pattern, code, flags=re.MULTILINE)]
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            pattern = r"^\s*class\s+([A-Za-z0-9_]+)\s*\(([^)]*Scene[^)]*)\)\s*:"
+            return [m[0] for m in re.findall(pattern, code, flags=re.MULTILINE)]
+
+        scene_names = []
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for base in node.bases:
+                base_name = self._base_name(base)
+                if base_name == "Scene" or base_name.endswith(".Scene"):
+                    scene_names.append(node.name)
+                    break
+        return scene_names
+
+    def _base_name(self, node) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            parent = self._base_name(node.value)
+            return f"{parent}.{node.attr}" if parent else node.attr
+        return ""
+
+    def _validate_code(self, code: str):
+        try:
+            ast.parse(code)
+        except SyntaxError as e:
+            return False, f"SyntaxError: {e}"
+        if not self._detect_scene_names(code):
+            return False, "No Scene classes found"
+        return True, ""
 
     # ----------------------------------------------------------------------
     # Audio Mixin setup
@@ -71,6 +106,17 @@ class InterpreterNode:
         print(f"[Warning] Could not find video for {scene_name}")
         print(f"  Expected at: {primary_path}")
         return None
+
+    def _write_attempt_logs(self, debug_dir: str, scene_name: str, attempt: int, result):
+        if not debug_dir:
+            return
+        os.makedirs(debug_dir, exist_ok=True)
+        safe_scene = re.sub(r"[^A-Za-z0-9_]+", "_", scene_name)
+        base = os.path.join(debug_dir, f"{safe_scene}_attempt_{attempt}")
+        with open(base + ".stdout.txt", "w", encoding="utf-8") as f:
+            f.write(result.stdout or "")
+        with open(base + ".stderr.txt", "w", encoding="utf-8") as f:
+            f.write(result.stderr or "")
 
     # ----------------------------------------------------------------------
     # Video merging
@@ -168,11 +214,13 @@ class InterpreterNode:
     # ----------------------------------------------------------------------
     # Core execution logic
     # ----------------------------------------------------------------------
-    def run(self, code: str, file_name: str, output_dir: str, media_dir: str, final_dir: str = None, max_attempts: int = 3):
+    def run(self, code: str, file_name: str, output_dir: str, media_dir: str, final_dir: str = None, max_attempts: int = 3, debug_dir: str = None):
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(media_dir, exist_ok=True)
         if final_dir:
             os.makedirs(final_dir, exist_ok=True)
+        if debug_dir:
+            os.makedirs(debug_dir, exist_ok=True)
         
         # Copy AudioMixin so local import works
         self._copy_audio_mixin(output_dir)
@@ -193,7 +241,6 @@ class InterpreterNode:
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
 
-        # Detect scenes
         scene_names = self._detect_scene_names(code)
         if not scene_names:
             print("[Warning] No Scene classes found in the script.")
@@ -203,37 +250,35 @@ class InterpreterNode:
         failed = []
         rendered_videos = []
 
-        # Get project root (projects/<name>)
         project_root = os.path.dirname(output_dir)
 
-        for scene_name in scene_names:
+        scene_index = 0
+        while scene_index < len(scene_names):
+            scene_name = scene_names[scene_index]
             print(f"\n[Render] Starting {scene_name}...")
+            scene_rendered = False
             for attempt in range(1, max_attempts + 1):
                 try:
-                    # Temporarily run Manim inside project root so media/ is local
-                    cwd = os.getcwd()
-                    os.chdir(project_root)
-
-                    try:
-                        result = subprocess.run(
-                           [
+                    result = subprocess.run(
+                        [
                             "manim",
                             "-ql",
                             "--disable_caching",
-                            os.path.join("output", f"{file_name}.py"),
+                            "--media_dir", os.path.abspath(media_dir),
+                            os.path.abspath(script_path),
                             scene_name
                         ],
-                            text=True,
-                            capture_output=True
-                        )
-                    finally:
-                        os.chdir(cwd)
+                        cwd=project_root,
+                        text=True,
+                        capture_output=True
+                    )
+                    self._write_attempt_logs(debug_dir, scene_name, attempt, result)
 
                     if result.returncode == 0:
                         print(f"[OK] {scene_name} rendered successfully.")
                         rendered.append(scene_name)
+                        scene_rendered = True
                         
-                        # Locate the rendered video
                         video_path = self._find_scene_video(media_dir, file_name, scene_name)
                         if video_path:
                             rendered_videos.append(video_path)
@@ -246,18 +291,32 @@ class InterpreterNode:
                         print(f"[Error] {scene_name} failed (attempt {attempt}/{max_attempts}).")
                         print(result.stderr.strip())
 
-                        # Try auto-fix
                         with open(script_path, "r", encoding="utf-8") as f:
                             current_code = f.read()
 
                         try:
-                            fixed_code = self.fixer.fix_code(current_code, result.stderr)
+                            fixed_code = self._get_fixer().fix_code(current_code, result.stderr)
                             if not fixed_code.strip():
                                 print("[Fixer Warning] Empty fix returned – skipping further attempts.")
                                 break
 
+                            valid, validation_error = self._validate_code(fixed_code)
+                            if not valid:
+                                print(f"[Fixer Warning] Invalid fix returned: {validation_error}")
+                                break
+
                             with open(script_path, "w", encoding="utf-8") as f:
                                 f.write(fixed_code)
+                            if debug_dir:
+                                safe_scene = re.sub(r"[^A-Za-z0-9_]+", "_", scene_name)
+                                fixed_path = os.path.join(debug_dir, f"{safe_scene}_attempt_{attempt}_fixed.py")
+                                with open(fixed_path, "w", encoding="utf-8") as f:
+                                    f.write(fixed_code)
+
+                            code = fixed_code
+                            updated_scene_names = self._detect_scene_names(code)
+                            if updated_scene_names:
+                                scene_names = updated_scene_names
                             print("[Auto-fix] CodeFixerAgent applied. Retrying...")
 
                         except Exception as fix_error:
@@ -268,9 +327,10 @@ class InterpreterNode:
                     print(f"[System Error] Could not execute Manim for {scene_name}: {e}")
                     break
 
-            else:
+            if not scene_rendered:
                 print(f"[Failure] Could not render {scene_name} after {max_attempts} attempts.")
                 failed.append(scene_name)
+            scene_index += 1
 
         print("\n--- Rendering Summary ---")
         print(f"Successful: {len(rendered)} scene(s): {rendered}")
