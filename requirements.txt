@@ -49,8 +49,6 @@ pydub==0.25.1
 pyglet==2.1.9
 pyglm==2.8.2
 Pygments==2.19.2
-pyobjc-core==11.1
-pyobjc-framework-Cocoa==11.1
 python-dotenv==1.1.1
 PyYAML==6.0.3
 regex==2025.9.18

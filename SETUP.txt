@@ -1,35 +1,42 @@
-Manim Explainer Agent — Setup Guide
-====================================
+ManimAgent Setup Guide
+======================
 
-1. Prerequisites
-   - Python 3.10+ (Recommended version: Python 3.11.14)
-   - Internet connection
-   - An OpenAI account (https://platform.openai.com)
+1. Install prerequisites
+   - Python 3.10+; Python 3.11 is recommended.
+   - FFmpeg on PATH.
+   - Manim system dependencies.
+   - LaTeX/MiKTeX for Tex and MathTex scenes.
+   - OpenAI API key.
 
-2. Get your OpenAI API Key
-   - Visit https://platform.openai.com/api-keys
-   - Click “Create new secret key”
-   - Copy your key (it starts with sk-proj-...)
+2. Create a virtual environment
+   Windows PowerShell:
+       python -m venv .venv
+       .\.venv\Scripts\Activate.ps1
 
-3. Add your API key
-   Option A: Create a file named .env in this project’s folder:
-       OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-   Option B: Run the program, and it will ask you for the key and save it automatically.
-
-4. Install dependencies
-   Inside your project folder:
+   macOS/Linux:
        python3 -m venv .venv
        source .venv/bin/activate
+
+3. Install Python dependencies
        pip install -r requirements.txt
+
+   macOS users can additionally install:
+       pip install -r requirements-macos.txt
+
+4. Add your API key
+   Create .env in this folder:
+       OPENAI_API_KEY=sk-proj-your-key
+
+   If .env is missing, main.py will ask for the key and save it.
 
 5. Run the project
        python main.py
 
-6. When asked:
-   - Enter the concept you want visualized.
-   - Choose whether to refine with the critic.
-   - Choose whether to render the animation.
-   - Choose a save location (default: ./output).
+6. Outputs
+   Each run creates:
+       projects/<concept>/debug
+       projects/<concept>/output
+       projects/<concept>/media
+       projects/<concept>/final
 
-Your animation will be generated and saved in the selected folder.
+   The merged video is saved in the final folder when rendering succeeds.
