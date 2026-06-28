@@ -23,6 +23,9 @@ ManimAgent Setup Guide
    macOS users can additionally install:
        pip install -r requirements-macos.txt
 
+   Optional voiceover compiler mode:
+       pip install -r requirements-voiceover.txt
+
 4. Add your API key
    Create .env in this folder:
        OPENAI_API_KEY=sk-proj-your-key
@@ -39,4 +42,14 @@ ManimAgent Setup Guide
        projects/<concept>/media
        projects/<concept>/final
 
+   The debug folder includes storyboard JSON, scene DSL, diagnostics,
+   quality report, and assembly result files.
+
    The merged video is saved in the final folder when rendering succeeds.
+
+7. Optional manim-voiceover mode
+   Windows PowerShell:
+       $env:MANIMAGENT_VOICEOVER_MODE="manim_voiceover"
+       python main.py
+
+   Default mode is audio_mixin.
