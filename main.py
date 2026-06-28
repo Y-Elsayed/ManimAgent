@@ -165,24 +165,37 @@ def main():
 
     output_dir, debug_dir, media_dir, final_dir = ensure_dirs(project_path)
 
-    # Initialize agents
+    # Initialize agents and pipeline components
     from agents.planner_agent import PlannerAgent
     from agents.generator_agent import GeneratorAgent
+    from pipeline.dsl_builder import SceneDSLBuilder
+    from pipeline.manim_compiler import ManimCompiler
+    from pipeline.visual_critic import VisualCritic
+    from pipeline.video_assembler import VideoAssembler
     from nodes.syntax_guard_node import SyntaxGuardNode
     from nodes.interpreter_node import InterpreterNode
 
     planner = PlannerAgent()
     generator = GeneratorAgent(use_tts=prefs["use_tts"], tts_voice=prefs["tts_voice"])
+    dsl_builder = SceneDSLBuilder()
+    voiceover_mode = os.getenv("MANIMAGENT_VOICEOVER_MODE", "audio_mixin").strip() or "audio_mixin"
+    manim_compiler = ManimCompiler(
+        use_tts=prefs["use_tts"],
+        tts_voice=prefs["tts_voice"],
+        voiceover_mode=voiceover_mode,
+    )
+    critic = VisualCritic()
+    assembler = VideoAssembler(mode="ffmpeg")
     syntax_guard = SyntaxGuardNode(
-        enable_audio_mixin=prefs["use_tts"],
-        replace_play_calls=False  # Generator handles this
+        enable_audio_mixin=prefs["use_tts"] and voiceover_mode != "manim_voiceover",
+        replace_play_calls=False
     )
     interpreter = InterpreterNode()
 
     # ----------------------------
     # Step 1 - Planning explanation
     # ----------------------------
-    print("\n[1/4] Planning explanation...")
+    print("\n[1/5] Planning explanation...")
     try:
         story_plan = planner.plan(concept)
     except Exception as e:
@@ -191,20 +204,43 @@ def main():
     save_debug(debug_dir, "story_plan.json", story_plan)
 
     # ----------------------------
-    # Step 2 - Generating Manim script
+    # Step 2 - Building scene DSL and compiling Manim script
     # ----------------------------
-    print("\n[2/4] Generating Manim script...")
+    print("\n[2/5] Building scene DSL and compiling Manim script...")
     try:
-        generation_result = generator.generate(story_plan)
+        scene_dsl = dsl_builder.build(story_plan)
+        scene_dsl_dict = scene_dsl.to_dict()
+        save_debug(debug_dir, "scene_dsl.json", scene_dsl_dict)
+        generation_result = manim_compiler.compile(scene_dsl)
     except Exception as e:
-        print(f"\n[Generation error] {e}")
-        return
+        print(f"\n[DSL/compiler warning] {e}")
+        print("[Fallback] Using direct LLM Manim generator.")
+        try:
+            generation_result = generator.generate(story_plan)
+            scene_dsl_dict = {
+                "concept": story_plan.get("concept", concept),
+                "scenes": [
+                    {
+                        "id": f"scene_{i:02d}",
+                        "title": scene.get("title", f"Scene {i}"),
+                        "scene_type": "llm_generated",
+                        "narration": scene.get("narration", ""),
+                        "objects": [],
+                        "animations": [],
+                        "equations": [],
+                    }
+                    for i, scene in enumerate(story_plan.get("scenes", []), start=1)
+                ],
+            }
+        except Exception as fallback_error:
+            print(f"\n[Generation error] {fallback_error}")
+            return
     save_debug(debug_dir, "generation_result.json", generation_result)
 
     # ----------------------------
     # Step 3 - Syntax validation & code sanitization
     # ----------------------------
-    print("\n[3/4] Running syntax validation and code sanitation...")
+    print("\n[3/5] Running syntax validation and code sanitation...")
     sanitized = syntax_guard.sanitize(generation_result["code"])
     sanitized_code = sanitized["code"]
     diagnostics = sanitized["diagnostics"]
@@ -218,7 +254,7 @@ def main():
     # ----------------------------
     # Step 4 - Rendering final animation
     # ----------------------------
-    print("\n[4/4] Rendering animation...")
+    print("\n[4/5] Rendering animation...")
     try:
         result = interpreter.run(
             code=sanitized_code,
@@ -248,6 +284,35 @@ def main():
                 print("\nAll scenes rendered successfully.")
         else:
             print("\n[Error] Rendering failed or no scenes found.")
+
+        print("\n[5/5] Evaluating quality and writing assembly manifest...")
+        organized = (result or {}).get("organized", {})
+        scene_videos = organized.get("individual_scenes") or (result or {}).get("video_files", [])
+        rendered = (result or {}).get("rendered", [])
+        narrations = generation_result.get("scene_narrations", [])
+        scene_ids = [
+            narrations[i].get("id", f"scene_{i + 1:02d}") if i < len(narrations) else f"scene_{i + 1:02d}"
+            for i in range(len(scene_videos))
+        ]
+        critic.extract_frame_samples(scene_videos, scene_ids, debug_dir)
+        quality_report = critic.evaluate_render_result(result or {}, scene_dsl_dict, debug_dir)
+        save_debug(debug_dir, "quality_report.json", quality_report)
+        print(f"Quality passed: {quality_report.get('passed')}")
+
+        clips = []
+        for i, video_path in enumerate(scene_videos):
+            caption = narrations[i].get("narration", "") if i < len(narrations) else ""
+            scene_id = scene_ids[i] if i < len(scene_ids) else rendered[i] if i < len(rendered) else f"scene_{i + 1:02d}"
+            clips.append({"scene_id": scene_id, "video_path": video_path, "caption": caption})
+        assembly = assembler.assemble(
+            title=story_plan.get("concept", concept),
+            clips=clips,
+            final_dir=final_dir,
+            file_name=generation_result.get("file_name", project_name),
+        )
+        save_debug(debug_dir, "assembly_result.json", assembly)
+        if assembly.get("manifest"):
+            print(f"Assembly manifest: {assembly['manifest']}")
             
     except Exception as e:
         print(f"\n[Render error] {e}")

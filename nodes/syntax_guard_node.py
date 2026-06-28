@@ -111,6 +111,8 @@ class SyntaxGuardNode:
             bases = m.group(2)
             if "AudioMixin" in bases:
                 return m.group(0)
+            if "VoiceoverScene" in bases:
+                return m.group(0)
             if "Scene" not in bases:
                 return m.group(0)
             return f"class {m.group(1)}(AudioMixin, {bases}):"
